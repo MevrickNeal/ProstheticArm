@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gemini Prosthetic Interface</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: white; display: grid; grid-template-columns: 300px 1fr; gap: 20px; padding: 20px; }
+        .panel { background: #2d2d2d; padding: 15px; border-radius: 10px; }
+        canvas { max-height: 200px; }
+        .finger-box { border: 1px solid #444; padding: 10px; margin-bottom: 10px; cursor: pointer; }
+        .active { border-color: #00ff00; background: #1b3d1b; }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h2>Hand Map</h2>
+        <div id="f0" class="finger-box" onclick="selectFinger(0)">Ring (CH 2)</div>
+        <div id="f1" class="finger-box" onclick="selectFinger(1)">Pinky (CH 3)</div>
+        <div id="f2" class="finger-box" onclick="selectFinger(2)">Thumb (CH 4)</div>
+        <div id="f3" class="finger-box" onclick="selectFinger(3)">Middle (CH 5)</div>
+        <div id="f4" class="finger-box" onclick="selectFinger(4)">Index (CH 6)</div>
+        <hr>
+        <button id="connectBtn" style="width:100%; height:40px;">Connect Arduino</button>
+        <p>Smoothing (α): <input type="range" id="smooth" min="1" max="99" value="10"></p>
+        <p>Threshold: <input type="range" id="thresh" min="0" max="500" value="50"></p>
+    </div>
+    <div class="panel">
+        <h2>Live Muscle Activity</h2>
+        <canvas id="emgChart"></canvas>
+    </div>
+
+    <script>
+        let port, reader, writer;
+        let selectedFinger = 0;
+        let smoothAlpha = 0.1;
+        
+        // Connect logic
+        document.getElementById('connectBtn').onclick = async () => {
+            port = await navigator.serial.requestPort();
+            await port.open({ baudRate: 250000 });
+            reader = port.readable.getReader();
+            writer = port.writable.getWriter();
+            readLoop();
+        };
+
+        async function readLoop() {
+            let decoder = new TextDecoder();
+            while (true) {
+                const { value, done } = await reader.read();
+                let data = decoder.decode(value);
+                // Math processing and graphing logic goes here
+                // Parse "S,v1,v2,v3,v4,v5,E"
+            }
+        }
+
+        function selectFinger(id) {
+            document.querySelectorAll('.finger-box').forEach(b => b.classList.remove('active'));
+            document.getElementById('f'+id).classList.add('active');
+            selectedFinger = id;
+        }
+    </script>
+</body>
+</html>
