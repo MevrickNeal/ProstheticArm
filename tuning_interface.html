@@ -1,63 +1,141 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Robotic Prosthetic Interface</title>
+    <title>Prosthetic Interface v1.2</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: sans-serif; background: #1a1a1a; color: white; display: grid; grid-template-columns: 300px 1fr; gap: 20px; padding: 20px; }
-        .panel { background: #2d2d2d; padding: 15px; border-radius: 10px; }
-        canvas { max-height: 200px; }
-        .finger-box { border: 1px solid #444; padding: 10px; margin-bottom: 10px; cursor: pointer; }
-        .active { border-color: #00ff00; background: #1b3d1b; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; display: grid; grid-template-columns: 400px 1fr; gap: 20px; padding: 20px; margin: 0; height: 100vh; }
+        .panel { background: #181818; padding: 20px; border-radius: 15px; border: 1px solid #2a2a2a; overflow: hidden; display: flex; flex-direction: column; }
+        h2 { color: #00e676; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px; border-bottom: 1px solid #2a2a2a; padding-bottom: 10px; }
+        
+        /* Hand SVG Styling */
+        #hand-container { position: relative; width: 100%; height: 350px; display: flex; justify-content: center; }
+        .finger { fill: #252525; stroke: #444; stroke-width: 2; cursor: pointer; transition: 0.3s; }
+        .finger:hover { fill: #333; }
+        .mapped { fill: #1b3d1b !important; stroke: #00e676 !important; }
+        .selected { fill: #00e676 !important; }
+        
+        button { background: #00e676; color: #000; border: none; padding: 15px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-bottom: 20px; }
+        .slider-group { margin-bottom: 15px; background: #222; padding: 10px; border-radius: 8px; }
+        canvas { background: #000; border-radius: 10px; flex-grow: 1; }
+        .status-bar { font-size: 0.7rem; color: #888; margin-top: 10px; font-family: monospace; }
     </style>
 </head>
 <body>
     <div class="panel">
-        <h2>Hand Map</h2>
-        <div id="f0" class="finger-box" onclick="selectFinger(0)">Ring (CH 2)</div>
-        <div id="f1" class="finger-box" onclick="selectFinger(1)">Pinky (CH 3)</div>
-        <div id="f2" class="finger-box" onclick="selectFinger(2)">Thumb (CH 4)</div>
-        <div id="f3" class="finger-box" onclick="selectFinger(3)">Middle (CH 5)</div>
-        <div id="f4" class="finger-box" onclick="selectFinger(4)">Index (CH 6)</div>
-        <hr>
-        <button id="connectBtn" style="width:100%; height:40px;">Connect Arduino</button>
-        <p>Smoothing (α): <input type="range" id="smooth" min="1" max="99" value="10"></p>
-        <p>Threshold: <input type="range" id="thresh" min="0" max="500" value="50"></p>
-    </div>
-    <div class="panel">
-        <h2>Live Muscle Activity</h2>
-        <canvas id="emgChart"></canvas>
-    </div>
-
-    <script>
-        let port, reader, writer;
-        let selectedFinger = 0;
-        let smoothAlpha = 0.1;
+        <h2>System Control</h2>
+        <button id="connectBtn">CONNECT TO PORT 1420</button>
         
-        // Connect logic
-        document.getElementById('connectBtn').onclick = async () => {
-            port = await navigator.serial.requestPort();
-            await port.open({ baudRate: 250000 });
-            reader = port.readable.getReader();
-            writer = port.writable.getWriter();
-            readLoop();
-        };
+        <div id="hand-container">
+            <svg viewBox="0 0 200 250" width="100%" height="100%">
+                <path id="finger-4" class="finger" d="M40,160 Q20,140 30,110 Q40,90 60,110 L70,140 Z" />
+                <path id="finger-6" class="finger" d="M75,130 L70,50 Q75,30 85,50 L95,130 Z" />
+                <path id="finger-5" class="finger" d="M100,120 L100,30 Q110,10 120,30 L125,120 Z" />
+                <path id="finger-2" class="finger" d="M130,130 L140,50 Q150,30 160,50 L155,130 Z" />
+                <path id="finger-3" class="finger" d="M160,160 L180,90 Q190,80 195,100 L185,170 Z" />
+                <path d="M60,140 L140,140 L160,220 L60,220 Z" fill="none" stroke="#444" />
+            </svg>
+        </div>
 
-        async function readLoop() {
-            let decoder = new TextDecoder();
-            while (true) {
-                const { value, done } = await reader.read();
-                let data = decoder.decode(value);
-                // Math processing and graphing logic goes here
-                // Parse "S,v1,v2,v3,v4,v5,E"
+        <div class="slider-group">
+            <label>Smoothing (α): <span id="smoothVal">0.10</span></label>
+            <input type="range" id="smooth" min="1" max="99" value="10">
+        </div>
+        <div id="mapping-status" class="status-bar">Select a finger to begin mapping...</div>
+    </div>
+
+    <div class="panel">
+        <h2>Live Myoelectric Streams & Calibration</h2>
+        <canvas id="emgChart"></canvas>
+        <div id="serial-log" class="status-bar">Waiting for data...</div>
+    </div>
+
+<script>
+    let port, reader, writer;
+    let bindings = {}; // Maps SensorIndex to ServoChannel
+    let lastSpikeSensor = -1;
+
+    // Initialize Chart
+    const ctx = document.getElementById('emgChart').getContext('2d');
+    const emgChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: Array(100).fill(''),
+            datasets: [
+                { label: 'A0', borderColor: '#ff5252', data: Array(100).fill(0), borderWidth: 2, pointRadius: 0 },
+                { label: 'A1', borderColor: '#448aff', data: Array(100).fill(0), borderWidth: 2, pointRadius: 0 },
+                { label: 'A2', borderColor: '#ffd740', data: Array(100).fill(0), borderWidth: 2, pointRadius: 0 },
+                { label: 'A3', borderColor: '#e040fb', data: Array(100).fill(0), borderWidth: 2, pointRadius: 0 },
+                { label: 'A6', borderColor: '#00e676', data: Array(100).fill(0), borderWidth: 2, pointRadius: 0 }
+            ]
+        },
+        options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { min: 0, max: 1023 } } }
+    });
+
+    // Mapping Logic: Click a finger SVG element
+    document.querySelectorAll('.finger').forEach(el => {
+        el.onclick = () => {
+            let servoChan = el.id.split('-')[1];
+            if(lastSpikeSensor != -1) {
+                bindings[lastSpikeSensor] = servoChan;
+                el.classList.add('mapped');
+                document.getElementById('mapping-status').innerText = `Bound Sensor A${[0,1,2,3,6][lastSpikeSensor]} to Channel ${servoChan}`;
+            } else {
+                alert("Flex your muscle first so the system can detect the spike!");
+            }
+        };
+    });
+
+    document.getElementById('connectBtn').onclick = async () => {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 250000 });
+        reader = port.readable.getReader();
+        writer = port.writable.getWriter();
+        readLoop();
+    };
+
+    async function readLoop() {
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+            const { value, done } = await reader.read();
+            buffer += decoder.decode(value);
+            let lines = buffer.split("\n");
+            buffer = lines.pop();
+
+            for (let line of lines) {
+                if (line.startsWith("S,") && line.endsWith(",E\r")) {
+                    let vals = line.split(",").slice(1, 6).map(Number);
+                    
+                    // Detect highest spike
+                    let maxVal = Math.max(...vals);
+                    if (maxVal > 500) { // Threshold for "Flexing"
+                        lastSpikeSensor = vals.indexOf(maxVal);
+                    }
+
+                    vals.forEach((v, i) => {
+                        emgChart.data.datasets[i].data.push(v);
+                        emgChart.data.datasets[i].data.shift();
+                        
+                        // If this sensor is bound to a finger, send move command
+                        if (bindings[i] && v > 600) {
+                            sendCommand(`C${bindings[i]},30`); // Close
+                        } else if (bindings[i] && v < 200) {
+                            sendCommand(`C${bindings[i]},450`); // Open
+                        }
+                    });
+                    emgChart.update('none');
+                }
             }
         }
+    }
 
-        function selectFinger(id) {
-            document.querySelectorAll('.finger-box').forEach(b => b.classList.remove('active'));
-            document.getElementById('f'+id).classList.add('active');
-            selectedFinger = id;
+    async function sendCommand(cmd) {
+        if (writer) {
+            const encoder = new TextEncoder();
+            await writer.write(encoder.encode(cmd));
         }
-    </script>
+    }
+</script>
 </body>
 </html>
