@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Offline Prosthetic OS</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <style>
+    body { margin: 0; background: #050505; color: #00ff00; font-family: 'Courier', monospace; }
+    #canvas-container { position: relative; width: 100vw; height: 100vh; }
+    canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+    video { display: none; }
+    #controls { position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(0,0,0,0.8); padding: 15px; border: 1px solid #00ff00; }
+    button { background: #00ff00; color: #000; border: none; padding: 10px; cursor: pointer; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <div id="controls">
+    <h2>OFFLINE PROSTHETIC</h2>
+    <button id="connectBtn">CONNECT NANO (PORT 1420)</button>
+    <div id="gestureStatus">GESTURE: IDLE</div>
+  </div>
+
+  <div id="canvas-container">
+    <video id="input_video"></video>
+    <canvas id="output_canvas"></canvas>
+  </div>
+
+<script>
+const videoElement = document.getElementById('input_video');
+const canvasElement = document.getElementById('output_canvas');
+const canvasCtx = canvasElement.getContext('2d');
+const gestureStatus = document.getElementById('gestureStatus');
+
+let serialWriter = null;
+let lastSent = 0;
+let lastCmd = "";
+
+// --- SERIAL SETUP ---
+document.getElementById('connectBtn').onclick = async () => {
+  const port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 115200 });
+  serialWriter = port.writable.getWriter();
+  alert("Arduino Linked Offline");
+};
+
+async function sendCommand(cmd) {
+  if (!serialWriter || cmd === lastCmd) return;
+  const now = Date.now();
+  if (now - lastSent > 100) { // 10Hz throttle
+    await serialWriter.write(new TextEncoder().encode(cmd));
+    lastCmd = cmd;
+    lastSent = now;
+    gestureStatus.innerText = "SENT: " + cmd;
+  }
+}
+
+// --- MEDIAPIPE HAND LOGIC ---
+function onResults(results) {
+  canvasCtx.save();
+  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+  canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+  if (results.multiHandLandmarks) {
+    for (const landmarks of results.multiHandLandmarks) {
+      drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
+      drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2});
+
+      // GESTURE CALCULATION (Pinch Detection)
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+      
+      const distance = Math.sqrt(
+        Math.pow(thumbTip.x - indexTip.x, 2) + 
+        Math.pow(thumbTip.y - indexTip.y, 2)
+      );
+
+      if (distance < 0.05) {
+        sendCommand("B"); // Grab
+      } else if (distance > 0.12) {
+        sendCommand("A"); // Release
+      }
+    }
+  }
+  canvasCtx.restore();
+}
+
+const hands = new Hands({locateFile: (file) => {
+  return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+}});
+
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+hands.onResults(onResults);
+
+const camera = new Camera(videoElement, {
+  onFrame: async () => {
+    await hands.send({image: videoElement});
+  },
+  width: 1280,
+  height: 720
+});
+camera.start();
+
+</script>
+</body>
+</html>
